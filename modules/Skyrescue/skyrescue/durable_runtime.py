@@ -55,8 +55,30 @@ def _hash(previous: str, workflow_id: str, kind: str, payload: dict[str, Any]) -
 class DurableWorkflowRuntime:
     """Persist issue/receipt state and reconcile a simulated external receiver."""
 
-    def __init__(self, database: Path):
+    def __init__(
+        self,
+        database: Path,
+        *,
+        reconciliation_mode: str = "full",
+        receiver_deduplicates: bool = True,
+        receiver_query_mode: str = "truthful",
+    ):
+        """Create a runtime instance.
+
+        The non-default arguments are controlled research configurations used by
+        the AAMAS ablation/stress harness.  They model a skipped reconciliation,
+        a receiver without key deduplication, and a one-time false-negative
+        receiver query respectively; production/default behaviour remains the
+        original full reconciliation with a truthful key-deduplicating receiver.
+        """
+        if reconciliation_mode not in {"full", "retry_on_missing_receipt"}:
+            raise ValueError(f"Unsupported reconciliation mode: {reconciliation_mode}")
+        if receiver_query_mode not in {"truthful", "false_absent_once"}:
+            raise ValueError(f"Unsupported receiver query mode: {receiver_query_mode}")
         self.database = database
+        self.reconciliation_mode = reconciliation_mode
+        self.receiver_deduplicates = receiver_deduplicates
+        self.receiver_query_mode = receiver_query_mode
         self.database.parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(database)
         self.connection.row_factory = sqlite3.Row
@@ -84,7 +106,9 @@ class DurableWorkflowRuntime:
             CREATE TABLE IF NOT EXISTS operations (
               workflow_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL,
               issue_version INTEGER, causal_parent TEXT, state TEXT NOT NULL,
-              receipt TEXT, receipt_count INTEGER NOT NULL DEFAULT 0
+              receipt TEXT, receipt_count INTEGER NOT NULL DEFAULT 0,
+              receiver_query_count INTEGER NOT NULL DEFAULT 0,
+              last_receiver_query_result TEXT
             );
             CREATE TABLE IF NOT EXISTS evidence (
               sequence_no INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id TEXT NOT NULL,
@@ -99,6 +123,10 @@ class DurableWorkflowRuntime:
         self._add_column_if_missing("operations", "issue_version", "INTEGER")
         self._add_column_if_missing("operations", "causal_parent", "TEXT")
         self._add_column_if_missing("operations", "receipt_count", "INTEGER NOT NULL DEFAULT 0")
+        self._add_column_if_missing(
+            "operations", "receiver_query_count", "INTEGER NOT NULL DEFAULT 0"
+        )
+        self._add_column_if_missing("operations", "last_receiver_query_result", "TEXT")
         self.connection.commit()
 
     def _add_column_if_missing(self, table: str, column: str, definition: str) -> None:
@@ -248,6 +276,30 @@ class DurableWorkflowRuntime:
         ).fetchone()
         if workflow is None:
             raise KeyError(f"Unknown workflow: {workflow_id}")
+        # A recovery retry is the same already-issued logical operation.  It
+        # must retain its key, issue version, and causal parent; otherwise the
+        # receiver correctly detects a conflicting binding for that same key.
+        if operation["issue_version"] is not None or operation["causal_parent"] is not None:
+            if not self._issue_record_is_valid(workflow_id, operation):
+                self._fail_safe(workflow_id, "invalid_durable_issue", "issue_verification_failed")
+                raise RuntimeError("Existing issue record failed verification")
+            updated = self.connection.execute(
+                "UPDATE operations SET state = ? WHERE workflow_id = ? AND state = ?",
+                (OperationState.EXECUTING.value, workflow_id, OperationState.PRECHECKED.value),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError(f"Cannot retry issue from {operation['state']}")
+            self._append_evidence(
+                workflow_id,
+                "same_key_retry_issued",
+                {
+                    "causal_parent": operation["causal_parent"],
+                    "idempotency_key": operation["idempotency_key"],
+                    "workflow_issue_version": operation["issue_version"],
+                },
+            )
+            self.connection.commit()
+            return self._operation(workflow_id)
         issue_version = int(workflow["version"])
         causal_parent = self._evidence_head(workflow_id)
         updated = self.connection.execute(
@@ -325,12 +377,17 @@ class DurableWorkflowRuntime:
         return parent is not None
 
     def _receiver_row_is_valid(self, operation: sqlite3.Row, sink: sqlite3.Row) -> bool:
+        """Verify receiver identity and receipt binding, not uniqueness of effects.
+
+        ``effect_count`` is deliberately excluded: the A4 stress test must be
+        able to observe a valid receiver receipt alongside duplicate external
+        effects after key deduplication is deliberately disabled.
+        """
         return bool(
             sink["idempotency_key"] == operation["idempotency_key"]
             and sink["workflow_id"] == operation["workflow_id"]
             and sink["workflow_version"] == operation["issue_version"]
             and sink["causal_parent"] == operation["causal_parent"]
-            and sink["effect_count"] == 1
             and self._receipt_is_valid(
                 sink["receipt"],
                 operation["idempotency_key"],
@@ -369,19 +426,36 @@ class DurableWorkflowRuntime:
         if sink is not None:
             if not self._receiver_row_is_valid(operation, sink):
                 raise RuntimeError("Receiver detected a conflicting or invalid operation binding")
-            self.connection.execute(
-                "UPDATE external_sink SET invoke_count = invoke_count + 1 WHERE idempotency_key = ?",
-                (idempotency_key,),
-            )
-            self._append_evidence(
-                operation["workflow_id"],
-                "receiver_duplicate_suppressed",
-                {
-                    "causal_parent": operation["causal_parent"],
-                    "idempotency_key": idempotency_key,
-                    "workflow_issue_version": operation["issue_version"],
-                },
-            )
+            if self.receiver_deduplicates:
+                self.connection.execute(
+                    "UPDATE external_sink SET invoke_count = invoke_count + 1 WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                )
+                self._append_evidence(
+                    operation["workflow_id"],
+                    "receiver_duplicate_suppressed",
+                    {
+                        "causal_parent": operation["causal_parent"],
+                        "idempotency_key": idempotency_key,
+                        "workflow_issue_version": operation["issue_version"],
+                    },
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE external_sink
+                       SET invoke_count = invoke_count + 1, effect_count = effect_count + 1
+                       WHERE idempotency_key = ?""",
+                    (idempotency_key,),
+                )
+                self._append_evidence(
+                    operation["workflow_id"],
+                    "receiver_duplicate_effect_fault_injected",
+                    {
+                        "causal_parent": operation["causal_parent"],
+                        "idempotency_key": idempotency_key,
+                        "workflow_issue_version": operation["issue_version"],
+                    },
+                )
             self.connection.commit()
             return sink["receipt"]
 
@@ -522,15 +596,38 @@ class DurableWorkflowRuntime:
             self._append_evidence(workflow_id, "reconciliation_unavailable", {"workflow_id": workflow_id})
             self.connection.commit()
             return OperationState.HUMAN_ESCALATED.value
+        self.connection.execute(
+            """UPDATE operations
+               SET receiver_query_count = receiver_query_count + 1
+               WHERE workflow_id = ?""",
+            (workflow_id,),
+        )
+        self.connection.commit()
+        operation = self._operation(workflow_id)
         sink = self.connection.execute(
             "SELECT * FROM external_sink WHERE idempotency_key = ?", (operation["idempotency_key"],)
         ).fetchone()
-        if sink is None:
+        false_absent = (
+            self.receiver_query_mode == "false_absent_once"
+            and operation["receiver_query_count"] == 1
+            and sink is not None
+        )
+        if sink is None or false_absent:
             self.connection.execute(
-                "UPDATE operations SET state = ? WHERE workflow_id = ?",
-                (OperationState.PRECHECKED.value, workflow_id),
+                """UPDATE operations
+                   SET state = ?, last_receiver_query_result = ?
+                   WHERE workflow_id = ?""",
+                (
+                    OperationState.PRECHECKED.value,
+                    "false_absent_fault_injected" if false_absent else "authoritatively_absent",
+                    workflow_id,
+                ),
             )
-            self._append_evidence(workflow_id, "reconciled_effect_absent", {"workflow_id": workflow_id})
+            self._append_evidence(
+                workflow_id,
+                "receiver_query_false_absent_fault_injected" if false_absent else "reconciled_effect_absent",
+                {"workflow_id": workflow_id},
+            )
             self.connection.commit()
             return OperationState.PRECHECKED.value
         if not self._receiver_row_is_valid(operation, sink):
@@ -538,6 +635,11 @@ class DurableWorkflowRuntime:
                 workflow_id, "invalid_receiver_receipt", "receipt_verification_failed"
             )
         receipt = sink["receipt"]
+        self.connection.execute(
+            "UPDATE operations SET last_receiver_query_result = ? WHERE workflow_id = ?",
+            ("occurred", workflow_id),
+        )
+        self.connection.commit()
         if not self._persist_receipt(workflow_id, receipt, "reconciled_effect_occurred"):
             return OperationState.HUMAN_ESCALATED.value
         return OperationState.COMMITTED.value
@@ -572,7 +674,24 @@ class DurableWorkflowRuntime:
             self._fail_safe(workflow_id, "invalid_committed_receipt", "receipt_verification_failed")
             raise RuntimeError("Committed receipt failed verification; human adjudication is required")
         if operation["state"] in {OperationState.EXECUTING.value, OperationState.EFFECT_UNKNOWN.value}:
-            state = self.reconcile(workflow_id, receiver_query_available=receiver_query_available)
+            if self.reconciliation_mode == "retry_on_missing_receipt" and operation[
+                "state"
+            ] == OperationState.EXECUTING.value:
+                self.connection.execute(
+                    """UPDATE operations
+                       SET state = ?, last_receiver_query_result = ?
+                       WHERE workflow_id = ?""",
+                    (OperationState.PRECHECKED.value, "not_queried", workflow_id),
+                )
+                self._append_evidence(
+                    workflow_id,
+                    "reconciliation_skipped_retry_on_missing_receipt",
+                    {"workflow_id": workflow_id},
+                )
+                self.connection.commit()
+                state = OperationState.PRECHECKED.value
+            else:
+                state = self.reconcile(workflow_id, receiver_query_available=receiver_query_available)
             if state == OperationState.COMMITTED.value:
                 return
             if state == OperationState.HUMAN_ESCALATED.value:
@@ -645,6 +764,8 @@ class DurableWorkflowRuntime:
             "invoke_count": sink["invoke_count"] if sink else 0,
             "effect_count": sink["effect_count"] if sink else 0,
             "receipt_count": operation["receipt_count"],
+            "receiver_query_count": operation["receiver_query_count"],
+            "receiver_query_result": operation["last_receiver_query_result"],
             "receiver_receipt_valid": receiver_receipt_valid,
             "local_receipt_valid": local_receipt_valid,
             "reservation_count": len(reservations),

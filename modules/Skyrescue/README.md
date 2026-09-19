@@ -44,6 +44,8 @@ delivery, or real-flight validation.
 - `scripts/run_workflow_scale.py`: fresh-process scale runner for one connected typed workflow graph containing 100, 250, 500, 1,000, 2,000, or 5,000 tasks; each size uses five seeds, five warm-up passes, and 30 measured passes.
 - `scripts/run_runtime_latency_benchmark.py`: five-warm-up/30-repeat configured-stack latency protocol reporting P50/P95/P99/mean/sample-SD.
 - `scripts/run_devops_portability.py`: executes synthetic UAV and DevOps workloads through the same `RuntimeContract` implementation and records code-identity evidence.
+- `scripts/run_aamas2027_runtime_experiments.py`: paired AAMAS reconciliation-ablation and A4 receiver-assumption stress runner; its non-default receiver semantics are explicitly test-only fault injection.
+- `scripts/build_aamas2027_reports.py`: builds SHA-256-backed pre-flight, integrity, paper-table, figure, and final-freeze reports from frozen inputs and runtime outputs without unsealing HeldOut402 Gold.
 - `scripts/reproduce_jss_submission.py`: one-command offline reproduction and SHA-256 output manifest.
 - `scripts/run_human_intent_llm_benchmark.py`: frozen DeepSeek/Qwen evaluation on the human-instruction gold set; annotation was independent between raters, while authoring/annotation independence was partial.
 - `scripts/run_heldout_llm_blind.py`: instruction-only, label-free DeepSeek/Qwen capture runner for the frozen 100-case confirmatory set; rejects inputs containing scenario cards or labels and saves resumable raw-response checkpoints.
