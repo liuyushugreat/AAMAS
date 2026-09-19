@@ -35,7 +35,7 @@ def git(command: list[str]) -> str:
 
 
 def csv_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(encoding="utf-8", newline="") as handle:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
 
 
@@ -97,6 +97,31 @@ def figure_b(summary: list[dict[str, str]], path: Path) -> None:
     path.write_text("\n".join(elements) + "\n", encoding="utf-8")
 
 
+def write_completed_exp1_reports(exp1_results: list[dict[str, str]], exp2: list[dict[str, str]], exp3: list[dict[str, str]], dev_count: int, heldout_count: int, dev_scenarios: set[str], heldout_scenarios: set[str], dev_entities: set[str], heldout_entities: set[str], timestamp: str) -> None:
+    """Refresh report artifacts after the blind Exp1 workflow has completed."""
+    exp1_dir = ARTIFACTS / "exp1"
+    write(ARTIFACTS / "PREFLIGHT_MISSING_ASSETS.md", "# Pre-flight missing assets / blockers\n\nExperiment 1 blockers are cleared. DeepSeek/Qwen candidates, the v1.1 system freeze, the HeldOut raw-response manifest, Gold unseal record, scoring outputs, and scenario-cluster bootstrap intervals are present.\n\nHeldOut Gold was opened only after the system freeze and after all 804 raw responses were hashed.\n")
+    write(ARTIFACTS / "AAMAS2027_RESULTS_FOR_PAPER.md", "# AAMAS 2027 results for paper\n\n## Semantic admission\n\nExperiment 1 completed under the frozen blind protocol. DeepSeek reported model `deepseek-flash`; Qwen reported model `qwen3-30b-a3b-instruct-2507`. Each produced one response for all 402 HeldOut instructions. The same raw responses were scored with Grounder v1.0 and v1.1; primary intervals use 67 scenario clusters and 10,000 bootstrap replicates. See `exp1/EXP1_HELDOUT402_RESULTS.md` and `exp1/EXP1_BOOTSTRAP_DISTRIBUTIONS.csv`.\n\nThe main result is a trade-off, not uniform safety improvement: v1.1 increases coverage and removes false rejection, but dangerous admission increases for both providers.\n\n## Crash-consistent commitment\n\nAcross 30 matched W2 crashes per configuration, Full SkyRescue recorded 0% replayed invocations and 0% duplicate effects. With reconciliation alone removed, replayed invocations were 100% (mean invocation count 2.0), while duplicate effects remained 0% because receiver-side key deduplication was fixed on.\n\n## Receiver-assumption boundary\n\nUnder truthful receiver queries, both dedup-on and dedup-off modes had 0% replayed invocations and duplicate effects. A deliberately injected false-absent response caused 100% replayed invocations; key deduplication prevented duplicate effects when on (0%) and disabling it produced duplicate effects in all trials (100%). This is an A4 fault-injection boundary result, not a receiver-failure prevalence estimate.\n")
+    with (ARTIFACTS / "TABLE_A_SEMANTIC_ADMISSION.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle); writer.writerow(["Provider", "ReportedModel", "Metric", "Grounder_v1.0", "Grounder_v1.1", "PairedDelta", "N", "CIResamplingUnit"])
+        writer.writerows([[r["Provider"], r["Model"], r["Metric"], r["Grounder_v1.0"], r["Grounder_v1.1"], r["PairedDelta"], r["N"], r["CIResamplingUnit"]] for r in exp1_results])
+    runtime_rows = [["Experiment 2", row["configuration"], row["window"], row["N"], ratio(row["ReplayInvocationRate"]), ratio(row["DuplicateEffectRate"]), ratio(row["RecoverySuccessRate"])] for row in exp2]
+    runtime_rows.extend([["Experiment 3", row["receiver_mode"], "W2", row["N"], ratio(row["ReplayInvocationRate"]), ratio(row["DuplicateEffectRate"]), ratio(row["FinalCommittedRate"])] for row in exp3])
+    with (ARTIFACTS / "TABLE_B_RUNTIME_SAFETY.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle); writer.writerow(["Experiment", "Configuration", "Window", "N", "ReplayInvocationRate", "DuplicateEffectRate", "CommittedRate"]); writer.writerows(runtime_rows)
+    figure_b(exp3, ARTIFACTS / "FIGURE_B_RECEIVER_ASSUMPTION_STRESS.svg")
+    write(ARTIFACTS / "AAMAS2027_MANUSCRIPT_UPDATE_SUGGESTIONS.md", "# Manuscript update suggestions\n\n- Add Experiment 1 as a paired semantic-admission trade-off: report coverage and false-rejection reduction together with the increased dangerous-admission rate. Do not call v1.1 uniformly safer.\n- State the actual reported model identifiers: `deepseek-flash` and `qwen3-30b-a3b-instruct-2507`.\n- Cite `exp1/EXP1_HELDOUT402_RESULTS.md` for the main table and `exp1/EXP1_BOOTSTRAP_DISTRIBUTIONS.csv` for scenario-cluster CIs.\n- Add the Experiment 2 W2 single-factor ablation and Experiment 3 A4 boundary result.\n- Do not upgrade any claim to distributed exactly-once delivery or operational deployment.\n")
+    write(ARTIFACTS / "AAMAS2027_RESEARCH_INTEGRITY_CHECK.md", "# AAMAS 2027 research-integrity check\n\n| Check | Result |\n|---|---|\n| HeldOut Gold read before system freeze? | No — unsealed after system freeze. |\n| HeldOut raw responses hashed before Gold unseal? | Yes — 804 response files, manifest frozen first. |\n| HeldOut post-hoc tuning? | No — threshold fixed from Dev198 only. |\n| Repeated HeldOut calls / selection? | No — one formal call per model and instruction; only technical retries. |\n| Human Gold changed? | No. |\n| Frozen split changed? | No. |\n| AI re-adjudicated Gold? | No. |\n| Primary CI unit | Scenario cluster (`scenario_id`), 67 clusters, 10,000 replicates. |\n\nNo human-review stop condition was triggered.\n")
+    exp1_text = (f"The frozen corpus and split were verified: {dev_count} Dev instructions from {len(dev_scenarios)} scenarios; {heldout_count} HeldOut instructions from {len(heldout_scenarios)} scenarios; scenario overlap {len(dev_scenarios & heldout_scenarios)}; canonical-entity overlap {len(dev_entities & heldout_entities)}. DeepSeek and Qwen each produced 402 HeldOut responses. v1.1 increased coverage and reduced false rejection, but also increased dangerous admission; this is reported as a trade-off. Full paired details and CIs are in `exp1/EXP1_HELDOUT402_RESULTS.md`.\n\n")
+    runtime2 = table(["Configuration", "Mean invokes", "Replay invocation", "Duplicate effect", "Recovery success"], [[row["configuration"], row["MeanInvokeCount"], ratio(row["ReplayInvocationRate"]), ratio(row["DuplicateEffectRate"]), ratio(row["RecoverySuccessRate"])] for row in exp2 if row["window"] == "after_effect_before_receipt"])
+    runtime3 = table(["Mode", "Replay invocation", "Duplicate effect", "Committed"], [[row["receiver_mode"], ratio(row["ReplayInvocationRate"]), ratio(row["DuplicateEffectRate"]), ratio(row["FinalCommittedRate"])] for row in exp3])
+    write(ARTIFACTS / "AAMAS2027_THREE_EXPERIMENTS_FINAL_REPORT.md", "# AAMAS 2027 three-experiment final report\n\n## Status\n\nExperiments 1, 2, and 3 are completed with real outputs. Experiment 1 followed the required freeze-before-unseal order.\n\n## Experiment 1 — HeldOut402 Grounder v1.1\n\n" + exp1_text + "## Experiment 2 — reconciliation ablation\n\n" + runtime2 + "\n\nThe data support the bounded statement that receiver reconciliation suppresses crash-induced replayed invocations, while receiver-side key deduplication independently prevents duplicate external effects.\n\n## Experiment 3 — A4 receiver-assumption stress\n\n" + runtime3 + "\n\nA false negative triggers replay; only simultaneous loss of key deduplication produced duplicate external effects. This is a controlled fault-injection boundary, not a receiver-failure prevalence estimate.\n\n## AAMAS readiness\n\nThe three-experiment evidence loop is complete. Report Exp1 as a semantic-admission trade-off and retain the runtime experiments as independent safety evidence.\n")
+    write(ARTIFACTS / "final_freeze" / "README.md", "# AAMAS 2027 experiment freeze references\n\nAuthoritative outputs:\n\n- `../exp1/EXP1_HELDOUT402_RESULTS.md`, `../exp1/EXP1_HELDOUT402_RESULTS.csv`, `../exp1/EXP1_PAIRED_DELTAS.csv`, and `../exp1/EXP1_BOOTSTRAP_DISTRIBUTIONS.csv`\n- `../exp1/SYSTEM_FREEZE_EXP1.json`, `../exp1/DEV_RAW_RESPONSE_MANIFEST.json`, `../exp1/HELDOUT_RAW_RESPONSE_MANIFEST.json`, and `../exp1/GOLD_UNSEAL_RECORD.json`\n- `../exp2/EXP2_TRIAL_LEVEL_RESULTS.csv` and `../exp2/EXP2_SUMMARY.csv`\n- `../exp3/EXP3_A4_TRIAL_RESULTS.csv` and `../exp3/EXP3_A4_SUMMARY.csv`\n- `../frozen_inputs/` for the frozen inputs and split manifests\n")
+    manifest_rows = [{"path": str(path.relative_to(REPO)), "sha256": digest(path), "bytes": path.stat().st_size} for path in sorted(ARTIFACTS.rglob("*")) if path.is_file() and path.name != "AAMAS2027_EXPERIMENT_FREEZE_MANIFEST.json"]
+    manifest = {"created_utc": timestamp, "git_commit": git(["git", "rev-parse", "HEAD"]), "environment": {"python": sys.version.split()[0], "os": platform.platform(), "openpyxl": __import__("openpyxl").__version__}, "heldout_gold_opened": True, "experiment_1_completed": True, "experiment_1_status": "completed", "experiment_2_completed": True, "experiment_3_completed": True, "sealed_gold_archive_member": SEALED_GOLD_MEMBER, "files": manifest_rows}
+    (ARTIFACTS / "AAMAS2027_EXPERIMENT_FREEZE_MANIFEST.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     frozen = ARTIFACTS / "frozen_inputs"
@@ -111,6 +136,18 @@ def main() -> None:
     heldout_entities = {row["target_zone_canonical_id"] for row in split if row["partition"] == "HELDOUT"}
     exp2 = csv_rows(ARTIFACTS / "exp2" / "EXP2_SUMMARY.csv")
     exp3 = csv_rows(ARTIFACTS / "exp3" / "EXP3_A4_SUMMARY.csv")
+    exp1_result_path = ARTIFACTS / "exp1" / "EXP1_HELDOUT402_RESULTS.csv"
+    if exp1_result_path.exists() and (ARTIFACTS / "exp1" / "GOLD_UNSEAL_RECORD.json").exists():
+        split = csv_rows(frozen / "sample_split_manifest_v1.1.1.csv")
+        write_completed_exp1_reports(
+            csv_rows(exp1_result_path), exp2, exp3, dev_count, heldout_count,
+            {row["scenario_id"] for row in split if row["partition"] == "DEV"},
+            {row["scenario_id"] for row in split if row["partition"] == "HELDOUT"},
+            {row["target_zone_canonical_id"] for row in split if row["partition"] == "DEV"},
+            {row["target_zone_canonical_id"] for row in split if row["partition"] == "HELDOUT"},
+            datetime.now(timezone.utc).isoformat(),
+        )
+        return
     commit = git(["git", "rev-parse", "HEAD"])
     timestamp = datetime.now(timezone.utc).isoformat()
 

@@ -24,6 +24,7 @@ delivery, or real-flight validation.
 - `skyrescue/benchmark.py`: SkyRescue runtime and baselines (`greedy`, `cp_sat`, `no_symbol_grounding`, `no_audit`, `full_replan`, `skyrescue`).
 - `skyrescue/workflow.py`: typed intent compiler, structured failures, workflow contracts, runtime baselines, and local-repair metrics.
 - `skyrescue/entity_grounding.py`: label-isolated contextual place grounding with a frozen emergency-domain ontology and execution gate for unresolved entities.
+- `skyrescue/grounder_v1_1.py`: deterministic v1.1 contextual admission gate used by the AAMAS 2027 HeldOut402 confirmatory experiment; it does not consume Gold labels online.
 - `skyrescue/fault_detection.py`: online weak-signal detectors and comparison baselines that do not read fault labels during inference.
 - `skyrescue/security.py`: deterministic authorization boundary for security challenge evaluation.
 - `skyrescue/langgraph_baseline.py`: LangGraph StateGraph/SQLite framework embedding around the exact shared repair and receiver path; impact closure, commitment, and receipt semantics remain explicit application logic.
@@ -46,6 +47,7 @@ delivery, or real-flight validation.
 - `scripts/run_devops_portability.py`: executes synthetic UAV and DevOps workloads through the same `RuntimeContract` implementation and records code-identity evidence.
 - `scripts/run_aamas2027_runtime_experiments.py`: paired AAMAS reconciliation-ablation and A4 receiver-assumption stress runner; its non-default receiver semantics are explicitly test-only fault injection.
 - `scripts/build_aamas2027_reports.py`: builds SHA-256-backed pre-flight, integrity, paper-table, figure, and final-freeze reports from frozen inputs and runtime outputs without unsealing HeldOut402 Gold.
+- `scripts/run_aamas2027_exp1.py`: prepares the v1.1.1 Dev198/HeldOut402 inputs, captures one DeepSeek/Qwen response per instruction, freezes Dev threshold and raw manifests, unseals Gold only after the HeldOut freeze, and writes paired scenario-cluster bootstrap results.
 - `scripts/reproduce_jss_submission.py`: one-command offline reproduction and SHA-256 output manifest.
 - `scripts/run_human_intent_llm_benchmark.py`: frozen DeepSeek/Qwen evaluation on the human-instruction gold set; annotation was independent between raters, while authoring/annotation independence was partial.
 - `scripts/run_heldout_llm_blind.py`: instruction-only, label-free DeepSeek/Qwen capture runner for the frozen 100-case confirmatory set; rejects inputs containing scenario cards or labels and saves resumable raw-response checkpoints.

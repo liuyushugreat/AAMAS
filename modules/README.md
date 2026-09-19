@@ -14,6 +14,7 @@ SkyRescue-Bench reproduction:
 - `skyrescue/workflow.py`: typed intent compiler, structured failures, recoverable/unrecoverable event profiles, workflow contracts, and local-repair metrics
 - `skyrescue/runtime_latency.py` and `scripts/run_runtime_latency_benchmark.py`: matched Native/LangGraph x persistence-off/on configured-stack protocol with identical checkpoint boundaries, five warm-ups, 30 measured repeats, and P50/P95/P99/mean/sample-SD
 - `skyrescue/entity_grounding.py`: frozen-ontology, label-isolated place grounding and unresolved-entity execution gate
+- `skyrescue/grounder_v1_1.py`: deterministic contextual admission gate used for the AAMAS 2027 v1.1 confirmatory evaluation
 - `skyrescue/fault_detection.py`: weak-signal online fault detectors, including a post-hoc temporal-causal reservation detector, without label access
 - `skyrescue/security.py`: deterministic authorization boundary for security challenge scoring
 - `scripts/`: dataset generators, validators, benchmark runners, security scorer, single-seed fault scorer, and multi-seed statistical evaluator
@@ -23,6 +24,7 @@ SkyRescue-Bench reproduction:
 - `skyrescue/langgraph_baseline.py` and `scripts/run_langgraph_baseline.py`: LangGraph StateGraph/SQLite framework embedding around the exact shared application repair and idempotent-receiver contract; the contract semantics are not native LangGraph guarantees
 - `skyrescue/durable_runtime.py` and `scripts/run_crash_recovery_experiment.py`: single-host SQLite state machine with `Executing`/`EffectUnknown`, separate invocation/effect/receipt counters, three-valued receiver reconciliation, HMAC-bound receipts, and 90 real child-process terminations across three crash windows
 - `scripts/run_aamas2027_runtime_experiments.py` and `scripts/build_aamas2027_reports.py`: controlled AAMAS 2027 reconciliation/A4 stress experiments and SHA-256-backed reports; the default runtime behaviour remains unchanged and non-default receiver semantics are test-only fault injection
+- `scripts/run_aamas2027_exp1.py`: freeze-safe DeepSeek/Qwen capture, Dev-only threshold selection, HeldOut402 unseal gate, paired v1.0/v1.1 scoring, and 67-scenario bootstrap confidence intervals
 - `skyrescue/core_contract.py`, `skyrescue/devops_adapter.py`, `skyrescue/uav_contract_adapter.py`, and `scripts/run_devops_portability.py`: exact shared contract code exercised by synthetic template-generated UAV and DevOps workloads, with adapter/core identity evidence
 - `scripts/reproduce_jss_submission.py`: one-command, network-free evidence reproduction that runs the full test suite and records versions, seeds, commands, and SHA-256 output hashes
 - `scripts/run_human_intent_llm_benchmark.py`: fixed-prompt DeepSeek/Qwen evaluation on the 100-case human-authored intent gold set; authoring/annotation independence is partial, each response is reused for direct JSON, schema, and full-compiler comparisons, and TLS verification prefers `certifi` when available
