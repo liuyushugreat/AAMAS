@@ -22,6 +22,11 @@ from typing import Any
 
 from skyrescue.workflow import compile_generated_candidate
 
+try:
+    import certifi
+except ImportError:  # pragma: no cover - environment-dependent TLS fallback
+    certifi = None
+
 
 FIELDS = (
     "task_type",
@@ -84,9 +89,11 @@ PROVIDERS = {
     },
 }
 
+CERTIFI_CA_FILE = Path(certifi.where()) if certifi is not None else None
 SYSTEM_CA_FILE = Path("/etc/ssl/cert.pem")
+CA_FILE = CERTIFI_CA_FILE if CERTIFI_CA_FILE and CERTIFI_CA_FILE.exists() else SYSTEM_CA_FILE
 SSL_CONTEXT = ssl.create_default_context(
-    cafile=str(SYSTEM_CA_FILE) if SYSTEM_CA_FILE.exists() else None
+    cafile=str(CA_FILE) if CA_FILE.exists() else None
 )
 
 

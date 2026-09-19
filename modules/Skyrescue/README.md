@@ -145,7 +145,8 @@ PYTHONPATH=. python scripts/run_crash_recovery_experiment.py \
 
 Run the real-LLM human-instruction benchmark with credentials stored outside
 the repository. The runner never copies API keys into its outputs and resumes
-from per-model JSONL checkpoints:
+from per-model JSONL checkpoints. TLS verification uses `certifi` when it is
+available, falling back to the system CA bundle otherwise:
 
 ```bash
 python scripts/run_human_intent_llm_benchmark.py \
