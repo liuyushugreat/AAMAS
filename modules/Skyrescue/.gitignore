@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+.venv*/
+# Generated run artifacts at module root only (keep release/ frozen bundle).
+/outputs/
+/results/
+/data/
+*.pyc
+.DS_Store
